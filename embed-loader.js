@@ -1,11 +1,11 @@
 /* Charge les fichiers du jeu depuis Build/embed/*.js (double-clic sur index.html ET site).
    + prechargement immediat + cache IndexedDB des fichiers decodes (lancements suivants tres rapides) */
 (function () {
-  var MANIFEST = {"SanFrancisco.json": {"size": 709, "chunks": 1}, "SanFrancisco.data.unityweb": {"size": 27979216, "chunks": 9}, "SanFrancisco.wasm.code.unityweb": {"size": 25765501, "chunks": 9}, "SanFrancisco.wasm.framework.unityweb": {"size": 521663, "chunks": 1}};
+  var MANIFEST = {"SanFrancisco.json": {"size": 709, "chunks": 1, "id": "json"}, "SanFrancisco.data.unityweb": {"size": 27979216, "chunks": 9, "id": "data"}, "SanFrancisco.wasm.code.unityweb": {"size": 25765501, "chunks": 9, "id": "code"}, "SanFrancisco.wasm.framework.unityweb": {"size": 521663, "chunks": 1, "id": "framework"}};
   var CHUNK = 3 * 1024 * 1024;
   var VERSION = 'v' + JSON.stringify(MANIFEST).length + '_' + Object.keys(MANIFEST).map(function (k) { return MANIFEST[k].size; }).join('_');
   var me = document.currentScript && document.currentScript.src;
-  var BASE = (me ? me.slice(0, me.lastIndexOf('/') + 1) : '') + 'Build/embed/';
+  var BASE = (me ? me.slice(0, me.lastIndexOf('/') + 1) : '') + 'gamedata/';
   var Real = window.XMLHttpRequest;
   var files = {};
   var LOAD = window.__ssLoad = { total: 0, per: {}, errors: [], cached: 0 };
@@ -64,9 +64,9 @@
       while (running < PAR && next < info.chunks) (function (i) {
         running++;
         var sc = document.createElement('script');
-        sc.src = BASE + encodeURIComponent(name) + '.' + i + '.js';
+        sc.src = BASE + info.id + '_' + i + '.js';
         sc.onload = function () { running--; sc.remove(); pump(); };
-        sc.onerror = function () { f.failed = true; LOAD.errors.push('Fichier introuvable : Build/embed/' + name + '.' + i + '.js'); finish(f, new Error('morceau ' + i + ' manquant')); };
+        sc.onerror = function () { f.failed = true; LOAD.errors.push('Fichier introuvable : ' + sc.src); finish(f, new Error('morceau ' + i + ' manquant')); };
         document.head.appendChild(sc);
       })(next++);
     }

@@ -586,6 +586,7 @@
       var n = document.createElement("div");
       n.setAttribute("id", "spinner"), n.className = "spinner", document.body.appendChild(n)
   }(), window.onload = function() {
+      if (window.__pokiOnloadDone) return; window.__pokiOnloadDone = true;   // une seule initialisation (sinon chargement infini)
       i();
       try {
           Object(v.a)().then(function() {

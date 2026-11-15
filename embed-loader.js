@@ -26,13 +26,14 @@
     } catch (e) { res(null); }
   });
   function cacheGet(name) {
-    return dbP.then(function (db) {
+    var timeout = new Promise(function (res) { setTimeout(function () { res(null); }, 3000); });   // cache bloque -> on recharge normalement
+    return Promise.race([timeout, dbP.then(function (db) {
       if (!db) return null;
       return new Promise(function (res) {
         try { var q = db.transaction('f').objectStore('f').get(VERSION + '/' + name); q.onsuccess = function () { res(q.result || null); }; q.onerror = function () { res(null); }; }
         catch (e) { res(null); }
       });
-    });
+    })]);
   }
   function cachePut(name, buf) {
     dbP.then(function (db) {

@@ -554,8 +554,12 @@ window.SEED_SAVE_B64 = "FAAAADkusWONuJPBKjYEgkuIFwLB0KaV2SwAANksAAAQb2JmdXNjYXRl
       }, 100);
     }
     function run() {
-      try { createFirstSave().then(patchAll, patchAll).then(boot, boot); } catch (e) { boot(); }
-      setTimeout(boot, 5000);
+      function go() {
+        try { createFirstSave().then(patchAll, patchAll).then(boot, boot); } catch (e) { boot(); }
+        setTimeout(boot, 5000);
+      }
+      // pas de jeu tant que le joueur n'est pas connecte a un compte
+      if (window.__ssWaitLogin) window.__ssWaitLogin(go); else go();
     }
     if (document.body) run();
     else document.addEventListener('DOMContentLoaded', run);

@@ -66,6 +66,9 @@
     if (!L) stage.textContent = 'Fichier embed-loader.js manquant ?';
     else if (p < 1) stage.textContent = (L.cached ? 'Lecture du cache...' : 'Telechargement du jeu...');
     else stage.textContent = 'Demarrage du jeu...';
+    var waitingLogin = false;
+    try { waitingLogin = !!window.__ssWaitLogin && !localStorage.getItem('ssmod_session'); } catch (e) {}
+    if (waitingLogin) { stage.textContent = p >= 1 ? 'Connecte-toi pour jouer' : stage.textContent + ' (connecte-toi)'; lastChange = Date.now(); }
     if (pct !== lastProg) { lastProg = pct; lastChange = Date.now(); }
     var all = errors.concat(L ? L.errors : []);
     var stuck = Date.now() - lastChange > 15000 || (L && L.errors.length);

@@ -315,7 +315,22 @@
   el('style', '', document.head, HAND_CSS);
 
   /* ---------- Comptes + classement (Supabase si configure, sinon local) ---------- */
-  var CFG = window.SS_CONFIG || {}, ONLINE = !!(CFG.supabaseUrl && CFG.supabaseKey);
+  var CFG = window.SS_CONFIG || {};
+  /* 3 modes : "vercel" (dossier api/ du site, classement global), "supabase" (config.js), sinon "local" */
+  var MODE = 'local', ONLINE = false, modeErr = '';
+  var API = (function () { var me = document.currentScript && document.currentScript.src; return (me ? me.slice(0, me.lastIndexOf('/') + 1) : '') + 'api/'; })();
+  var modeP = new Promise(function (resolve) {
+    if (CFG.supabaseUrl && CFG.supabaseKey) { MODE = 'supabase'; ONLINE = true; return resolve(MODE); }
+    if (!/^https?:$/.test(location.protocol)) return resolve(MODE);
+    fetch(API + 'top', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) { MODE = 'vercel'; ONLINE = true; } else if (j && j.error) modeErr = j.error;
+      resolve(MODE);
+    }, function () { resolve(MODE); });
+  });
+  function vapi(name, data) {
+    return fetch(API + name, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data || {}), cache: 'no-store' })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'Serveur indisponible' }; }); });
+  }
   function rpc(fn, body) {
     return fetch(CFG.supabaseUrl.replace(/\/$/, '') + '/rest/v1/rpc/' + fn, {
       method: 'POST', headers: { apikey: CFG.supabaseKey, Authorization: 'Bearer ' + CFG.supabaseKey, 'Content-Type': 'application/json' },
@@ -328,52 +343,70 @@
         return Array.prototype.map.call(new Uint8Array(b), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
       });
     }
-    var h1 = 0x811c9dc5, out = '';               // repli (pas de crypto) : hachage simple
+    var h1 = 0x811c9dc5, out = '';
     for (var r = 0; r < 8; r++) { for (var i = 0; i < str.length; i++) { h1 ^= str.charCodeAt(i) + r; h1 = Math.imul(h1, 16777619) >>> 0; } out += ('0000000' + h1.toString(16)).slice(-8); }
     return Promise.resolve(out);
   }
   function passHash(pseudo, pass) { return sha256(pseudo.toLowerCase() + ':' + pass + ':ss-surf'); }
+  var loginWaiters = [];
+  function loggedIn() { var w = loginWaiters; loginWaiters = []; w.forEach(function (f) { try { f(); } catch (e) {} }); }
+  // le jeu (index.html) attend ca avant de demarrer
+  window.__ssWaitLogin = function (cb) { if (Acc.session) cb(); else loginWaiters.push(cb); };
   var Acc = {
     session: LS.get('session', null),
     register: function (pseudo, pass) {
-      return passHash(pseudo, pass).then(function (h) {
-        if (ONLINE) return rpc('ss_register', { p_pseudo: pseudo, p_hash: h }).then(function (ok) { if (!ok) throw new Error('Ce pseudo est deja pris.'); return h; });
+      return Promise.all([passHash(pseudo, pass), modeP]).then(function (a) {
+        var h = a[0];
+        if (MODE === 'vercel') return vapi('register', { pseudo: pseudo, hash: h }).then(function (j) { if (!j.ok) throw new Error(j.error || 'Erreur'); return h; });
+        if (MODE === 'supabase') return rpc('ss_register', { p_pseudo: pseudo, p_hash: h }).then(function (ok) { if (!ok) throw new Error('Ce pseudo est deja pris.'); return h; });
         var all = LS.get('accounts', {}); if (all[pseudo.toLowerCase()]) throw new Error('Ce pseudo est deja pris sur ce navigateur.');
         all[pseudo.toLowerCase()] = { pseudo: pseudo, h: h, best: 0 }; LS.set('accounts', all); return h;
-      }).then(function (h) { Acc.session = { pseudo: pseudo, h: h }; LS.set('session', Acc.session); });
+      }).then(function (h) { Acc.session = { pseudo: pseudo, h: h, mode: MODE }; LS.set('session', Acc.session); loggedIn(); });
     },
     login: function (pseudo, pass) {
-      return passHash(pseudo, pass).then(function (h) {
-        if (ONLINE) return rpc('ss_login', { p_pseudo: pseudo, p_hash: h }).then(function (ok) { if (!ok) throw new Error('Pseudo ou mot de passe faux.'); return h; });
-        var a = LS.get('accounts', {})[pseudo.toLowerCase()]; if (!a || a.h !== h) throw new Error('Pseudo ou mot de passe faux.'); return h;
-      }).then(function (h) { Acc.session = { pseudo: pseudo, h: h }; LS.set('session', Acc.session); });
+      return Promise.all([passHash(pseudo, pass), modeP]).then(function (a) {
+        var h = a[0];
+        if (MODE === 'vercel') return vapi('login', { pseudo: pseudo, hash: h }).then(function (j) { if (!j.ok) throw new Error(j.error || 'Erreur'); pseudo = j.pseudo || pseudo; return h; });
+        if (MODE === 'supabase') return rpc('ss_login', { p_pseudo: pseudo, p_hash: h }).then(function (ok) { if (!ok) throw new Error('Pseudo ou mot de passe faux.'); return h; });
+        var x = LS.get('accounts', {})[pseudo.toLowerCase()]; if (!x || x.h !== h) throw new Error('Pseudo ou mot de passe faux.'); pseudo = x.pseudo; return h;
+      }).then(function (h) { Acc.session = { pseudo: pseudo, h: h, mode: MODE }; LS.set('session', Acc.session); loggedIn(); });
     },
     logout: function () { Acc.session = null; try { localStorage.removeItem('ssmod_session'); } catch (e) {} },
     submit: function (ms) {
       if (!Acc.session) return Promise.resolve();
       var s = Acc.session;
-      if (ONLINE) return rpc('ss_submit', { p_pseudo: s.pseudo, p_hash: s.h, p_ms: Math.round(ms) }).catch(function () {});
-      var all = LS.get('accounts', {}), a = all[s.pseudo.toLowerCase()]; if (a && ms > a.best) { a.best = Math.round(ms); LS.set('accounts', all); }
-      return Promise.resolve();
+      return modeP.then(function () {
+        if (MODE === 'vercel') return vapi('submit', { pseudo: s.pseudo, hash: s.h, ms: Math.round(ms) });
+        if (MODE === 'supabase') return rpc('ss_submit', { p_pseudo: s.pseudo, p_hash: s.h, p_ms: Math.round(ms) });
+        var all = LS.get('accounts', {}), x = all[s.pseudo.toLowerCase()]; if (x && ms > x.best) { x.best = Math.round(ms); LS.set('accounts', all); }
+      }).catch(function () {});
     },
     top: function () {
-      if (ONLINE) return rpc('ss_top', { p_limit: 10 }).then(function (r) { return r || []; });
-      var all = LS.get('accounts', {}), arr = [];
-      for (var k in all) if (all[k].best > 0) arr.push({ pseudo: all[k].pseudo, best_ms: all[k].best });
-      arr.sort(function (a, b) { return b.best_ms - a.best_ms; }); return Promise.resolve(arr.slice(0, 10));
+      return modeP.then(function () {
+        if (MODE === 'vercel') return fetch(API + 'top', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) { return j.list || []; });
+        if (MODE === 'supabase') return rpc('ss_top', { p_limit: 10 }).then(function (r) { return r || []; });
+        var all = LS.get('accounts', {}), arr = [];
+        for (var k in all) if (all[k].best > 0) arr.push({ pseudo: all[k].pseudo, best_ms: all[k].best });
+        arr.sort(function (a, b) { return b.best_ms - a.best_ms; }); return arr.slice(0, 10);
+      });
     }
   };
+  // une session d'un autre mode (ex : compte local avant la mise en ligne) doit se reconnecter
+  modeP.then(function () { if (Acc.session && Acc.session.mode && Acc.session.mode !== MODE) { Acc.logout(); showAccount(); } updTags(); });
+  function updTags() {
+    document.querySelectorAll('.ss-modetag').forEach(function (t) { t.textContent = ONLINE ? 'classement global' : 'classement (local)'; });
+  }
 
   /* ---------- Ecran de compte (obligatoire a la 1re visite) ---------- */
   var accWrap;
   function showAccount() {
     if (accWrap) { accWrap.style.display = 'flex'; return; }
-    accWrap = el('div', 'position:fixed;inset:0;z-index:100010;display:flex;align-items:center;justify-content:center;background:rgba(20,18,12,.72)');
+    accWrap = el('div', 'position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(20,18,12,.72)');
     accWrap.className = 'hm';
     ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'pointerdown', 'touchstart', 'wheel'].forEach(function (t) { accWrap.addEventListener(t, function (e) { e.stopPropagation(); }); });
     var card = el('div', 'width:min(360px,90vw)', accWrap); card.className = 'hm-card hm-tilt';
     var mode = 'create';
-    var tag = el('div', '', card, ONLINE ? 'classement mondial' : 'mode local'); tag.className = 'hm-tag';
+    var tag = el('div', '', card, ONLINE ? 'classement global' : 'classement (local)'); tag.className = 'hm-tag ss-modetag';
     var title = el('div', 'margin-top:10px', card, 'Cree ton compte'); title.className = 'hm-h';
     el('div', '', card, 'Pseudo').className = 'hm-lbl';
     var ip = el('input', '', card); ip.className = 'hm-in'; ip.maxLength = 16; ip.placeholder = '3 a 16 lettres / chiffres';
@@ -390,7 +423,7 @@
       if (w.length < 4) { err.textContent = 'Mot de passe : 4 caracteres minimum.'; return; }
       go.disabled = true; err.textContent = '';
       (mode === 'create' ? Acc.register(p, w) : Acc.login(p, w)).then(function () {
-        accWrap.style.display = 'none'; iw.value = ''; updAccLine(); loadBoard();
+        accWrap.style.display = 'none'; iw.value = ''; updAccLine(); loadBoard(); updTags();
       }, function (e) { err.textContent = e.message || 'Erreur, reessaie.'; }).then(function () { go.disabled = false; });
     }
     go.addEventListener('click', submit);
@@ -472,7 +505,7 @@
     ['mousedown', 'mouseup', 'click', 'pointerdown', 'touchstart', 'wheel'].forEach(function (t) { card.addEventListener(t, function (e) { e.stopPropagation(); }); });
     var top = el('div', '', card); top.className = 'ssh-top';
     var left = el('div', '', top); left.className = 'ssh-left';
-    var tg = el('div', '', left, ONLINE ? 'classement mondial' : 'classement (local)'); tg.className = 'hm-tag';
+    var tg = el('div', '', left, ONLINE ? 'classement global' : 'classement (local)'); tg.className = 'hm-tag ss-modetag';
     el('div', 'margin:8px 0 6px', left, 'Sans piece').className = 'hm-h';
     boardEl = el('div', 'font-size:14px', left);
     var rec = el('div', '', left); rec.className = 'ssh-rec';

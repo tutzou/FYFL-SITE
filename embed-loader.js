@@ -1,11 +1,11 @@
 /* Charge les fichiers du jeu depuis Build/embed/*.js (double-clic sur index.html ET site).
    + prechargement immediat + cache IndexedDB des fichiers decodes (lancements suivants tres rapides) */
 (function () {
-  var MANIFEST = {"SanFrancisco.json": {"size": 709, "chunks": 1, "id": "json"}, "SanFrancisco.data.unityweb": {"size": 27979216, "chunks": 9, "id": "data"}, "SanFrancisco.wasm.code.unityweb": {"size": 25765501, "chunks": 9, "id": "code"}, "SanFrancisco.wasm.framework.unityweb": {"size": 521663, "chunks": 1, "id": "framework"}};
-  var CHUNK = 3 * 1024 * 1024;
+  var MANIFEST = {"SanFrancisco.json": {"size": 709, "chunks": 1, "id": "json"}, "SanFrancisco.data.unityweb": {"size": 27979216, "chunks": 27, "id": "data"}, "SanFrancisco.wasm.code.unityweb": {"size": 25765501, "chunks": 25, "id": "code"}, "SanFrancisco.wasm.framework.unityweb": {"size": 521663, "chunks": 1, "id": "framework"}};
+  var CHUNK = 1024 * 1024;
   var VERSION = 'v' + JSON.stringify(MANIFEST).length + '_' + Object.keys(MANIFEST).map(function (k) { return MANIFEST[k].size; }).join('_');
   var me = document.currentScript && document.currentScript.src;
-  var BASE = (me ? me.slice(0, me.lastIndexOf('/') + 1) : '') + 'gamedata/';
+  var ROOT = (me ? me.slice(0, me.lastIndexOf('/') + 1) : ''), BASE = ROOT + 'gamedata/';
   var Real = window.XMLHttpRequest;
   var files = {};
   var LOAD = window.__ssLoad = { total: 0, per: {}, errors: [], cached: 0 };
@@ -63,11 +63,19 @@
       if (f.got >= info.chunks) { cachePut(name, f.buf.buffer.slice(0)); finish(f, null); return; }
       while (running < PAR && next < info.chunks) (function (i) {
         running++;
-        var sc = document.createElement('script');
-        sc.src = BASE + info.id + '_' + i + '.js';
-        sc.onload = function () { running--; sc.remove(); pump(); };
-        sc.onerror = function () { f.failed = true; LOAD.errors.push('Fichier introuvable : ' + sc.src); finish(f, new Error('morceau ' + i + ' manquant')); };
-        document.head.appendChild(sc);
+        // on essaie plusieurs emplacements (selon comment les fichiers ont ete envoyes sur l'hebergeur)
+        var tries = [BASE, BASE + 'gamedata/', ROOT, ROOT + 'Gamedata/'], t = 0;
+        (function attempt() {
+          var sc = document.createElement('script');
+          sc.src = tries[t] + info.id + '_' + i + '.js';
+          sc.onload = function () { running--; sc.remove(); if (t) BASE = tries[t]; pump(); };
+          sc.onerror = function () {
+            sc.remove(); t++;
+            if (t < tries.length) return attempt();
+            f.failed = true; LOAD.errors.push('Fichier introuvable : ' + BASE + info.id + '_' + i + '.js'); finish(f, new Error('morceau ' + i + ' manquant'));
+          };
+          document.head.appendChild(sc);
+        })();
       })(next++);
     }
     pump();

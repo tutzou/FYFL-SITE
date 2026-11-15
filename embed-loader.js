@@ -8,6 +8,9 @@
   var BASE = (me ? me.slice(0, me.lastIndexOf('/') + 1) : '') + 'Build/embed/';
   var Real = window.XMLHttpRequest;
   var files = {};
+  var LOAD = window.__ssLoad = { total: 0, per: {}, errors: [], cached: 0 };
+  Object.keys(MANIFEST).forEach(function (k) { LOAD.total += MANIFEST[k].size; LOAD.per[k] = 0; });
+  LOAD.loaded = function () { var t = 0; for (var k in LOAD.per) t += LOAD.per[k]; return t; };
 
   function b64ToBytes(b64) {
     if (Uint8Array.fromBase64) return Uint8Array.fromBase64(b64);
@@ -49,7 +52,7 @@
   window.__SSEMBED = function (name, idx, b64) {
     var f = files[name]; if (!f || f.have[idx]) return;
     var bytes = b64ToBytes(b64);
-    f.buf.set(bytes, idx * CHUNK); f.have[idx] = true; f.got++; f.loaded += bytes.length;
+    f.buf.set(bytes, idx * CHUNK); f.have[idx] = true; f.got++; f.loaded += bytes.length; LOAD.per[name] = f.loaded;
     f.listeners.forEach(function (l) { l.progress(f.loaded, f.buf.length); });
   };
 
@@ -63,7 +66,7 @@
         var sc = document.createElement('script');
         sc.src = BASE + encodeURIComponent(name) + '.' + i + '.js';
         sc.onload = function () { running--; sc.remove(); pump(); };
-        sc.onerror = function () { f.failed = true; finish(f, new Error('morceau ' + i + ' manquant')); };
+        sc.onerror = function () { f.failed = true; LOAD.errors.push('Fichier introuvable : Build/embed/' + name + '.' + i + '.js'); finish(f, new Error('morceau ' + i + ' manquant')); };
         document.head.appendChild(sc);
       })(next++);
     }
@@ -76,7 +79,7 @@
     var info = MANIFEST[name];
     var f = files[name] = { buf: null, have: [], got: 0, loaded: 0, listeners: [], done: false, err: null, failed: false };
     cacheGet(name).then(function (cached) {
-      if (cached && cached.byteLength === info.size) { f.buf = new Uint8Array(cached); f.loaded = info.size; finish(f, null); return; }
+      if (cached && cached.byteLength === info.size) { f.buf = new Uint8Array(cached); f.loaded = info.size; LOAD.per[name] = info.size; LOAD.cached++; finish(f, null); return; }
       f.buf = new Uint8Array(info.size); loadChunks(name, f);
     });
     return f;
